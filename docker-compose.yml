@@ -1,0 +1,32 @@
+# The satellite worker. One container, no ports, nothing connects to it: it reads farm
+# geometry, fetches imagery on a schedule and writes to the four Satellite* tables.
+#
+#   docker compose up -d --build     start
+#   docker compose logs -f           watch
+#   docker compose down              stop
+services:
+  satellite-worker:
+    build: .
+    image: agricentral-satellite:latest
+    container_name: satellite-worker
+    restart: unless-stopped
+
+    # Database URLs and the schedule. Never baked into the image - .dockerignore keeps
+    # .env out of it, so the same image runs against dev or production unchanged.
+    env_file: .env
+
+    # Measured, not guessed: 83 MB peak on a 213-cell farm, 100 MB on a 121,374-cell one.
+    # Memory barely moves with farm size because rows stream into 1,000-row inserts rather
+    # than accumulating. Runtime is the real cost, not memory.
+    mem_limit: 512m
+
+    # Keep a bounded amount of log. Each run writes one JSON line per farm.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+# Exactly one container, always. Each process runs its own six-hour sweep loop, so a second
+# one would download the same imagery on the same schedule and race on the same rows. This
+# worker is the single writer of those tables and the design depends on it. That is also
+# why there is no `deploy.replicas` here: under plain compose it is ignored, and under Swarm
+# it would invite someone to scale it.
